@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: silver_stock_prices
+    columns:
+      - name: ticker
+        data_tests:
+          - not_null
+          - unique
+      - name: current_price_usd
+        data_tests:
+          - not_null

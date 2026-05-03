@@ -3,25 +3,27 @@
 
 WITH crypto AS (
     SELECT
-        coin_name        AS asset_name,
-        symbol           AS asset_ticker,
+        coin_name            AS asset_name,
+        symbol               AS asset_ticker,
         current_price_usd,
         market_cap_usd,
-        volume_24h_usd   AS volume,
+        ROUND(market_cap_usd / 1e9, 2) AS market_cap_billions,
+        volume_24h_usd       AS volume,
         price_change_24h_pct AS price_change_pct,
-        'crypto'         AS asset_class
+        'crypto'             AS asset_class
     FROM {{ ref('silver_crypto_prices') }}
 ),
 
 stocks AS (
     SELECT
-        company_name     AS asset_name,
-        ticker           AS asset_ticker,
+        company_name         AS asset_name,
+        ticker               AS asset_ticker,
         current_price_usd,
         market_cap_usd,
-        volume_24h       AS volume,
+        ROUND(market_cap_usd / 1e9, 2) AS market_cap_billions,
+        volume_24h           AS volume,
         price_change_52w_pct AS price_change_pct,
-        'stock'          AS asset_class
+        'stock'              AS asset_class
     FROM {{ ref('silver_stock_prices') }}
 )
 

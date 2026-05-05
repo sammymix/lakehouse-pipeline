@@ -2,15 +2,18 @@ import requests
 import psycopg2
 import json
 from datetime import datetime
+from dotenv import load_dotenv
+from pathlib import Path
 import os
 
 # Connection to the PostgreSQL database
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 conn = psycopg2.connect(
-    host="localhost",
-    port=5432,
-    dbname="lakehouse",
-    user="lakehouse",
-    password="lakehouse"
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT"),
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD")
 )
 cur = conn.cursor()
 

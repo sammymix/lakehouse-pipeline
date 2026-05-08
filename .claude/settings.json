@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(python3 -c \"import sys,re; m=re.search(r'\\\"file_path\\\": ?\\\"([^\\\"]+)\\\"', sys.stdin.read()); print(m.group(1) if m else '')\" 2>/dev/null); RUFF=/Users/samueljeanlys/lakehouse-pipeline/venv/bin/ruff; [[ -n \"$FILE\" && \"$FILE\" == *.py ]] && \"$RUFF\" check --fix --unsafe-fixes \"$FILE\" && \"$RUFF\" format \"$FILE\"; true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$CLAUDE_TOOL_INPUT_COMMAND\" | grep -qE \"(rm -rf /|DROP TABLE|git push --force)\" && echo BLOCKED && exit 1 || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

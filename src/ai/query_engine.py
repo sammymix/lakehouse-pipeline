@@ -10,12 +10,15 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 logger = logging.getLogger(__name__)
 
 # ── 0. Startup check — fail fast if required env vars are missing ─────────────
-_REQUIRED_ENV = ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
+_REQUIRED_ENV = ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "OPENAI_API_KEY", "API_KEY"]
 _missing = [v for v in _REQUIRED_ENV if not os.getenv(v)]
 if _missing:
     raise RuntimeError(f"Missing required environment variables: {', '.join(_missing)}")
 
-# ── 1. Database connection ────────────────────────────────────────────────────
+# ── 1. Module-level OpenAI client (one instance, not one per request) ─────────
+_openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# ── 2. Database connection ────────────────────────────────────────────────────
 def get_db_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -25,7 +28,7 @@ def get_db_connection():
         password=os.getenv("DB_PASSWORD"),
     )
 
-# ── 2. Schema context we give the model so it knows what tables exist ─────────
+# ── 3. Schema context we give the model so it knows what tables exist ─────────
 SCHEMA_CONTEXT = """
 You are a data analyst assistant. You have access to a Postgres database with these views:
 
@@ -67,8 +70,12 @@ Rules:
 - LIMIT results to 20 rows maximum
 """
 
-# ── 3. SQL validation — block anything that isn't a plain SELECT ──────────────
-_FORBIDDEN_KEYWORDS = {"drop", "insert", "update", "delete", "alter", "truncate"}
+# ── 4. SQL validation — block anything that isn't a plain SELECT ──────────────
+_FORBIDDEN_KEYWORDS = {
+    "drop", "insert", "update", "delete", "alter", "truncate",
+    "copy", "execute", "do", "call", "grant", "create",
+    "pg_read_file", "pg_write_file", "pg_ls_dir",
+}
 
 def validate_sql(sql: str) -> None:
     """Raise ValueError if sql is not a safe, single SELECT statement."""
@@ -78,14 +85,12 @@ def validate_sql(sql: str) -> None:
     if ";" in normalized:
         raise ValueError("SQL must not contain semicolons")
     for kw in _FORBIDDEN_KEYWORDS:
-        # word-boundary check: surround keyword with spaces / start-of-string
-        if f" {kw} " in f" {normalized} ":
+        if kw in f" {normalized} ":
             raise ValueError(f"SQL contains forbidden keyword: {kw.upper()}")
 
-# ── 4. Convert question → SQL using GPT-4o-mini ───────────────────────────────
+# ── 5. Convert question → SQL using GPT-4o-mini ───────────────────────────────
 def question_to_sql(question: str) -> str:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
+    response = _openai_client.chat.completions.create(
         model="gpt-4o-mini",
         max_tokens=500,
         messages=[
@@ -95,27 +100,30 @@ def question_to_sql(question: str) -> str:
     )
     return response.choices[0].message.content.strip()
 
-# ── 5. Run the SQL against Postgres ──────────────────────────────────────────
+# ── 6. Run the SQL against Postgres (read-only session) ───────────────────────
 def run_sql(sql: str) -> tuple[list, list]:
     validate_sql(sql)
+    conn = None
     try:
         conn = get_db_connection()
+        conn.set_session(readonly=True)
         cur = conn.cursor()
         cur.execute(sql)
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
         cur.close()
-        conn.close()
         return columns, rows
     except psycopg2.Error as exc:
         logger.error("Database error: %s", exc)
         raise RuntimeError("query failed") from exc
+    finally:
+        if conn is not None:
+            conn.close()
 
-# ── 6. Summarize results in plain English using GPT-4o-mini ──────────────────
+# ── 7. Summarize results in plain English using GPT-4o-mini ──────────────────
 def summarize_results(question: str, sql: str, columns: list, rows: list) -> str:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     results_text = f"Columns: {columns}\nRows: {rows[:10]}"
-    response = client.chat.completions.create(
+    response = _openai_client.chat.completions.create(
         model="gpt-4o-mini",
         max_tokens=300,
         messages=[

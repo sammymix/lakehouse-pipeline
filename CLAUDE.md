@@ -39,12 +39,10 @@ See @src/dbt_project/crypto_pipeline/dbt_project.yml for dbt config.
 - Local: .env file — never commit it
 - AWS: Secrets Manager — never hardcode credentials in Lambda functions
 
-## Hooks
-- Hooks use $CLAUDE_TOOL_INPUT_PATH for file paths — $CLAUDE_WORKSPACE resolves to empty
-- ruff requires --unsafe-fixes to auto-remove unused imports (F401)
-
 ## Hooks — learned in practice
-- Claude Code passes file data via stdin, NOT environment variables — $CLAUDE_TOOL_INPUT_PATH does not exist
-- Extract file path from stdin using Python, not jq — stdin JSON contains literal newlines that break jq
-- ruff must use absolute venv path: /Users/samueljeanlys/lakehouse-pipeline/venv/bin/ruff
-- Hook pattern that works: pipe stdin to python3 -c to extract file_path, then run ruff on it
+- Claude Code passes tool data via stdin as JSON, NOT environment variables — $CLAUDE_TOOL_INPUT_PATH does not exist
+- Extract fields from stdin using Python + json.loads(), not jq or re.search — stdin JSON contains literal newlines that break jq
+- ruff path: $(git rev-parse --show-toplevel)/venv/bin/ruff — resolved at runtime, works on any machine
+- ruff requires --unsafe-fixes to auto-remove unused imports (F401)
+- Hook pattern that works: pipe stdin to python3 -c to parse JSON and extract the needed field, then act on it
+- PreToolUse blocks use exit 2 to signal Claude Code to cancel the tool call

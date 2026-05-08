@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "FILE=$(python3 -c \"import sys,re; m=re.search(r'\\\"file_path\\\": ?\\\"([^\\\"]+)\\\"', sys.stdin.read()); print(m.group(1) if m else '')\" 2>/dev/null); RUFF=/Users/samueljeanlys/lakehouse-pipeline/venv/bin/ruff; [[ -n \"$FILE\" && \"$FILE\" == *.py ]] && \"$RUFF\" check --fix --unsafe-fixes \"$FILE\" && \"$RUFF\" format \"$FILE\"; true"
+            "command": "FILE=$(python3 -c \"import sys,json; d=json.loads(sys.stdin.read()); print(d.get('file_path',''))\" 2>/dev/null); RUFF=$(git rev-parse --show-toplevel)/venv/bin/ruff; [[ -n \"$FILE\" && \"$FILE\" == *.py ]] && \"$RUFF\" check --fix --unsafe-fixes \"$FILE\" && \"$RUFF\" format \"$FILE\"; true"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"$CLAUDE_TOOL_INPUT_COMMAND\" | grep -qE \"(rm -rf /|DROP TABLE|git push --force)\" && echo BLOCKED && exit 1 || exit 0"
+            "command": "CMD=$(python3 -c \"import sys,json; d=json.loads(sys.stdin.read()); print(d.get('command',''))\" 2>/dev/null); echo \"$CMD\" | grep -qE \"(rm -rf [/~.]|git push --force|git push -f|DROP TABLE|DROP DATABASE|TRUNCATE|DELETE FROM)\" && echo BLOCKED && exit 2 || exit 0"
           }
         ]
       }

@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "src/lambda/**"
+      - ".github/workflows/deploy-lambda.yml"
 
 jobs:
   deploy:
@@ -41,7 +44,8 @@ jobs:
             --exclude "*.DS_Store" \
             --exclude "*__MACOSX*" \
             --exclude "*.pyc" \
-            --exclude "*__pycache__*"
+            --exclude "*/__pycache__/*" \
+            --exclude "*__pycache__/"
 
       - name: Build stocks Lambda package
         run: |
@@ -58,7 +62,8 @@ jobs:
             --exclude "*.DS_Store" \
             --exclude "*__MACOSX*" \
             --exclude "*.pyc" \
-            --exclude "*__pycache__*"
+            --exclude "*/__pycache__/*" \
+            --exclude "*__pycache__/"
 
       - name: Upload packages to S3
         run: |
@@ -73,7 +78,7 @@ jobs:
             --function-name lakehouse-ingest-crypto \
             --s3-bucket ${{ secrets.S3_BUCKET }} \
             --s3-key lambda/crypto_lambda.zip
-          aws lambda wait function-updated \
+          aws lambda wait function-updated-v2 \
             --function-name lakehouse-ingest-crypto
 
       - name: Update stocks Lambda function code
@@ -82,5 +87,5 @@ jobs:
             --function-name lakehouse-ingest-stocks \
             --s3-bucket ${{ secrets.S3_BUCKET }} \
             --s3-key lambda/stocks_lambda.zip
-          aws lambda wait function-updated \
+          aws lambda wait function-updated-v2 \
             --function-name lakehouse-ingest-stocks

@@ -1,8 +1,8 @@
-import boto3
 import json
-import requests
-import psycopg2
 import os
+
+import psycopg2
+import requests
 
 def get_db_connection():
     return psycopg2.connect(

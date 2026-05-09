@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(python3 -c \"import sys,json; d=json.loads(sys.stdin.read()); print(d.get('file_path',''))\"); RUFF=$(git rev-parse --show-toplevel)/venv/bin/ruff; [ -x \"$RUFF\" ] || exit 0; [[ -n \"$FILE\" && \"$FILE\" == *.py ]] && \"$RUFF\" check --fix --unsafe-fixes \"$FILE\" && \"$RUFF\" format \"$FILE\"; true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(python3 -c \"import sys,json; d=json.loads(sys.stdin.read()); print(d.get('command',''))\") || exit 2; printf '%s\\n' \"$CMD\" | grep -qE \"(rm[[:space:]]+-[a-zA-Z]*[rR][a-zA-Z-]*|rm[[:space:]]+--recursive|git push --force|git push -f|DROP TABLE|DROP DATABASE|TRUNCATE|DELETE FROM|UPDATE[[:space:]]|ALTER[[:space:]]+TABLE)\" && echo BLOCKED && exit 2 || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

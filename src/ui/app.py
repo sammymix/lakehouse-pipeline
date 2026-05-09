@@ -1,7 +1,6 @@
 
 import streamlit as st
 import requests
-import json
 import pandas as pd
 from datetime import datetime
 
@@ -14,8 +13,7 @@ st.set_page_config(
 )
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-# The FastAPI server must be running: uvicorn main:app --port 8000
-FASTAPI_URL = "http://localhost:8000"
+DEFAULT_FASTAPI_URL = "http://localhost:8000"
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -24,9 +22,10 @@ with st.sidebar:
     st.divider()
 
     st.subheader("⚙️ Settings")
+    api_url = st.text_input("FastAPI URL", value=DEFAULT_FASTAPI_URL)
+    api_key = st.text_input("API Key", type="password", placeholder="Bearer token for /ask endpoint")
     show_sql = st.toggle("Show generated SQL", value=True)
     show_raw_data = st.toggle("Show raw query results", value=False)
-    api_url = st.text_input("FastAPI URL", value=FASTAPI_URL)
 
     st.divider()
     st.subheader("💡 Example Questions")
@@ -59,8 +58,6 @@ with st.sidebar:
     st.caption("Data refreshes hourly via AWS Lambda + EventBridge")
 
 # ── Session state ─────────────────────────────────────────────────────────────
-# Streamlit re-runs the entire script on every interaction.
-# session_state persists data across re-runs.
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
 
@@ -74,19 +71,48 @@ st.caption(
     f"Last refreshed: check the `/health` endpoint"
 )
 
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+def format_large_numbers(df: pd.DataFrame) -> pd.DataFrame:
+    """Format billion/trillion numeric columns for readability."""
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype in ("float64", "int64"):
+            if df[col].max() > 1e9:
+                df[col] = df[col].apply(
+                    lambda x: (
+                        f"${x/1e12:.2f}T" if pd.notna(x) and x > 1e12
+                        else f"${x/1e9:.1f}B" if pd.notna(x)
+                        else x
+                    )
+                )
+    return df
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 # ── API health check ──────────────────────────────────────────────────────────
-try:
-    health = requests.get(f"{api_url}/health", timeout=3)
-    if health.status_code == 200:
-        st.success("✅ FastAPI server connected", icon="✅")
-    else:
-        st.error("⚠️ FastAPI server returned an error. Is uvicorn running?")
-except requests.exceptions.ConnectionError:
+@st.cache_data(ttl=30)
+def check_health(url: str) -> int:
+    try:
+        return requests.get(f"{url}/health", timeout=3).status_code
+    except requests.exceptions.ConnectionError:
+        return 0
+
+
+health_status = check_health(api_url)
+if health_status == 200:
+    st.success("✅ FastAPI server connected", icon="✅")
+elif health_status == 0:
     st.error(
         "❌ Cannot connect to FastAPI server. "
         "Run `cd src/ai && uvicorn main:app --reload --port 8000` in a terminal."
     )
-    st.stop()  # Do not render the chat if the API is unreachable
+    st.stop()
+else:
+    st.error("⚠️ FastAPI server returned an error. Is uvicorn running?")
 
 st.divider()
 
@@ -96,32 +122,20 @@ for msg in st.session_state["messages"]:
         if msg["role"] == "user":
             st.markdown(msg["content"])
         else:
-            # Assistant message — show the answer prominently
             st.markdown(f"**{msg['answer']}**")
 
-            # Optionally show the generated SQL
             if show_sql and msg.get("sql"):
                 with st.expander("🔍 Generated SQL", expanded=False):
                     st.code(msg["sql"], language="sql")
 
-            # Optionally show the raw results as a table
             if show_raw_data and msg.get("results"):
                 with st.expander("📊 Raw query results", expanded=False):
                     try:
-                        df = pd.DataFrame(msg["results"])
-                        # Format large numbers (market cap, volume) for readability
-                        for col in df.columns:
-                            if df[col].dtype == "float64" or df[col].dtype == "int64":
-                                if df[col].max() > 1e9:
-                                    df[col] = df[col].apply(
-                                        lambda x: f"${x/1e12:.2f}T" if x > 1e12
-                                        else f"${x/1e9:.1f}B"
-                                    )
+                        df = format_large_numbers(pd.DataFrame(msg["results"]))
                         st.dataframe(df, use_container_width=True)
                     except Exception:
                         st.json(msg["results"])
 
-            # Show metadata (timestamp, response time)
             if msg.get("timestamp"):
                 st.caption(
                     f"🕐 {msg['timestamp']}  "
@@ -129,30 +143,22 @@ for msg in st.session_state["messages"]:
                 )
 
 # ── Chat input ────────────────────────────────────────────────────────────────
-# Handle pre-filled question from sidebar button click
-default_value = st.session_state.pop("pending_question", "")
+# Consume the pending question set by sidebar buttons
+pending = st.session_state.get("pending_question", "")
+if pending:
+    st.session_state["pending_question"] = ""
 
-user_input = st.chat_input(
-    "Ask a question about crypto and stock data...",
-    key="chat_input"
-)
+user_input = st.chat_input("Ask a question about crypto and stock data...", key="chat_input")
 
-# Accept input from either the chat box or a sidebar button
-question = user_input or default_value
+question = user_input or pending
 
 # ── Process the question ──────────────────────────────────────────────────────
 if question:
-    # Add user message to conversation
-    st.session_state["messages"].append({
-        "role": "user",
-        "content": question
-    })
+    st.session_state["messages"].append({"role": "user", "content": question})
 
-    # Show the user message immediately
     with st.chat_message("user"):
         st.markdown(question)
 
-    # Call the FastAPI endpoint
     with st.chat_message("assistant"):
         with st.spinner("Generating SQL and querying the database..."):
             start_time = datetime.now()
@@ -160,7 +166,8 @@ if question:
                 response = requests.post(
                     f"{api_url}/ask",
                     json={"question": question},
-                    timeout=30
+                    headers=_auth_headers(),
+                    timeout=30,
                 )
                 elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
@@ -171,26 +178,22 @@ if question:
                     results = data.get("rows", [])
                     timestamp = datetime.now().strftime("%H:%M:%S")
 
-                    # Display the answer
                     st.markdown(f"**{answer}**")
 
-                    # Show SQL if enabled
                     if show_sql and sql:
                         with st.expander("🔍 Generated SQL", expanded=False):
                             st.code(sql, language="sql")
 
-                    # Show raw results if enabled
                     if show_raw_data and results:
                         with st.expander("📊 Raw query results", expanded=False):
                             try:
-                                df = pd.DataFrame(results)
+                                df = format_large_numbers(pd.DataFrame(results))
                                 st.dataframe(df, use_container_width=True)
                             except Exception:
                                 st.json(results)
 
                     st.caption(f"🕐 {timestamp}  ⏱️ {elapsed_ms}ms")
 
-                    # Save assistant message to conversation history
                     st.session_state["messages"].append({
                         "role": "assistant",
                         "answer": answer,
@@ -201,7 +204,10 @@ if question:
                     })
 
                 else:
-                    error_detail = response.json().get("detail", response.text)
+                    try:
+                        error_detail = response.json().get("detail", response.text)
+                    except Exception:
+                        error_detail = response.text
                     st.error(f"API error ({response.status_code}): {error_detail}")
 
             except requests.exceptions.Timeout:
@@ -217,5 +223,4 @@ if question:
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
 
-    # Rerun to update the conversation display cleanly
     st.rerun()

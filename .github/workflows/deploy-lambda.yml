@@ -1,0 +1,86 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build and Deploy Lambda
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Build crypto Lambda package
+        run: |
+          mkdir -p lambda_build/crypto
+          pip install psycopg2-binary requests \
+            --target lambda_build/crypto \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all:
+          cp src/lambda/ingest_crypto.py lambda_build/crypto/lambda_function.py
+          cd lambda_build/crypto
+          zip -r ../crypto_lambda.zip . \
+            --exclude "*.DS_Store" \
+            --exclude "*__MACOSX*" \
+            --exclude "*.pyc" \
+            --exclude "*__pycache__*"
+
+      - name: Build stocks Lambda package
+        run: |
+          mkdir -p lambda_build/stocks
+          pip install psycopg2-binary requests \
+            --target lambda_build/stocks \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all:
+          cp src/lambda/ingest_stocks.py lambda_build/stocks/lambda_function.py
+          cd lambda_build/stocks
+          zip -r ../stocks_lambda.zip . \
+            --exclude "*.DS_Store" \
+            --exclude "*__MACOSX*" \
+            --exclude "*.pyc" \
+            --exclude "*__pycache__*"
+
+      - name: Upload packages to S3
+        run: |
+          aws s3 cp lambda_build/crypto_lambda.zip \
+            s3://${{ secrets.S3_BUCKET }}/lambda/crypto_lambda.zip
+          aws s3 cp lambda_build/stocks_lambda.zip \
+            s3://${{ secrets.S3_BUCKET }}/lambda/stocks_lambda.zip
+
+      - name: Update crypto Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name lakehouse-ingest-crypto \
+            --s3-bucket ${{ secrets.S3_BUCKET }} \
+            --s3-key lambda/crypto_lambda.zip
+          aws lambda wait function-updated \
+            --function-name lakehouse-ingest-crypto
+
+      - name: Update stocks Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name lakehouse-ingest-stocks \
+            --s3-bucket ${{ secrets.S3_BUCKET }} \
+            --s3-key lambda/stocks_lambda.zip
+          aws lambda wait function-updated \
+            --function-name lakehouse-ingest-stocks
